@@ -308,6 +308,7 @@ let mpMode = 'none';       // 'none' | 'host' | 'client'
 let mpConnected = false;
 let clientMapReady = false; // client: true after first fullmap received
 let p2InputBuffer = { dir: -1, fire: false };
+let lastSentInput = { d: -1, f: false }; // track last sent input to avoid redundant messages
 let pendingMapChanges = [];
 let syncTimer = 0;
 
@@ -826,7 +827,12 @@ function update() {
     else if (keys['ArrowDown']||keys['s']||keys['S']) wantDir=DIR.DOWN;
     else if (keys['ArrowLeft']||keys['a']||keys['A']) wantDir=DIR.LEFT;
     else if (keys['ArrowRight']||keys['d']||keys['D']) wantDir=DIR.RIGHT;
-    sendRelay({ t:'in', d:wantDir, f:!!(keys[' ']||keys['Enter']) });
+    const fire=!!(keys[' ']||keys['Enter']);
+    // Only send when input actually changes — avoids flooding server with 60msg/sec
+    if (wantDir!==lastSentInput.d || fire!==lastSentInput.f) {
+      sendRelay({ t:'in', d:wantDir, f:fire });
+      lastSentInput={ d:wantDir, f:fire };
+    }
     return; // client rendering happens via applyRemoteState
   }
 
@@ -893,7 +899,7 @@ function update() {
   // MP: sync state to client
   if (mpMode==='host') {
     syncTimer++;
-    if (syncTimer>=3) { syncTimer=0; sendStateToClient(); }
+    if (syncTimer>=6) { syncTimer=0; sendStateToClient(); }
   }
 
   updateUI();
@@ -1073,6 +1079,8 @@ function handleSignal(msg) {
       document.getElementById('joinStatus').textContent = 'Connected! Starting game...';
       document.getElementById('joinStatus').style.color = '#0f0';
       onMPConnected();
+      // If map still not ready after 3s, ask host for it
+      setTimeout(()=>{ if (!clientMapReady) sendRelay({ t:'req_map' }); }, 3000);
       break;
 
     case 'relay':
@@ -1096,6 +1104,9 @@ function handleGameMessage(data) {
   if (!data) return;
   if (mpMode==='host' && data.t==='in') {
     p2InputBuffer = { dir:data.d, fire:data.f };
+  } else if (mpMode==='host' && data.t==='req_map') {
+    // Client asked for a fresh fullmap (e.g. joined late or missed the first one)
+    sendFullMapToClient();
   } else if (mpMode==='client' && (data.t==='gs' || data.t==='fullmap')) {
     applyRemoteState(data);
   } else if (mpMode==='client' && data.t==='restart') {
@@ -1136,7 +1147,13 @@ function onMPConnected() {
   document.getElementById('mpConnStatus').style.color='#0f0';
   if (mpMode==='host') {
     lives=3; score=0; p2Lives=3; p2Score=0; stage=0;
-    setTimeout(()=>{ initStage(); sendFullMapToClient(); }, 800);
+    setTimeout(()=>{
+      initStage();
+      sendFullMapToClient();
+      // Resend fullmap after 1.5s as a safety net in case the first
+      // one arrived before the client was ready to apply it
+      setTimeout(sendFullMapToClient, 1500);
+    }, 500);
   }
 }
 
