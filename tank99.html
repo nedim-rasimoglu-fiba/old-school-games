@@ -307,7 +307,6 @@ let godMode = false, passiveEnemies = false, noAggroEnemies = false;
 let mpMode = 'none';       // 'none' | 'host' | 'client'
 let mpConnected = false;
 let clientMapReady = false; // client: true after first fullmap received
-let peerConn = null, dataChannel = null;
 let p2InputBuffer = { dir: -1, fire: false };
 let pendingMapChanges = [];
 let syncTimer = 0;
@@ -827,9 +826,7 @@ function update() {
     else if (keys['ArrowDown']||keys['s']||keys['S']) wantDir=DIR.DOWN;
     else if (keys['ArrowLeft']||keys['a']||keys['A']) wantDir=DIR.LEFT;
     else if (keys['ArrowRight']||keys['d']||keys['D']) wantDir=DIR.RIGHT;
-    if (dataChannel&&dataChannel.readyState==='open') {
-      dataChannel.send(JSON.stringify({ t:'in', d:wantDir, f:!!(keys[' ']||keys['Enter']) }));
-    }
+    sendRelay({ t:'in', d:wantDir, f:!!(keys[' ']||keys['Enter']) });
     return; // client rendering happens via applyRemoteState
   }
 
@@ -956,11 +953,6 @@ function switchTab(tab) {
   // Pre-connect to signaling server as soon as the MP tab is opened
   if (tab==='mp') connectSignaling(()=>{});
 }
-const ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  { urls: 'stun:stun1.l.google.com:19302' },
-];
-
 // ----------------------------------------------------------------
 // GAME OVER / PLAY AGAIN
 // ----------------------------------------------------------------
@@ -1017,9 +1009,7 @@ function playAgain() {
     clientMapReady=false;
     initStage();
     sendFullMapToClient();
-    if (dataChannel && dataChannel.readyState==='open') {
-      dataChannel.send(JSON.stringify({t:'restart'}));
-    }
+    sendRelay({t:'restart'});
   } else {
     // Single player
     stage=0; lives=3; score=0; p2Score=0; initStage();
@@ -1027,7 +1017,7 @@ function playAgain() {
 }
 
 // ----------------------------------------------------------------
-// SIGNALING (WebSocket → game-server on Railway)
+// WEBSOCKET MULTIPLAYER (all game data relayed through server)
 // ----------------------------------------------------------------
 const SIGNAL_URL = 'wss://game-server-production-5029.up.railway.app';
 let signalWS = null;
@@ -1037,12 +1027,19 @@ function connectSignaling(onReady) {
     const el = document.getElementById('mp-server-status');
     if (el) { el.textContent = txt; el.style.color = col || '#aaa'; }
   };
+  // If already open, call onReady immediately
   if (signalWS && signalWS.readyState === WebSocket.OPEN) { onReady(); return; }
+  // If already connecting, queue the callback
+  if (signalWS && signalWS.readyState === WebSocket.CONNECTING) {
+    const prev = signalWS.onopen;
+    signalWS.onopen = () => { prev && prev(); onReady(); };
+    return;
+  }
   setStatus('Connecting to server...', '#aaa');
   signalWS = new WebSocket(SIGNAL_URL);
   signalWS.onopen    = () => { setStatus('● Server connected', '#0f0'); onReady(); };
   signalWS.onerror   = () => setStatus('⚠ Cannot reach server', '#f55');
-  signalWS.onclose   = () => { setStatus('○ Server disconnected', '#aaa'); signalWS = null; };
+  signalWS.onclose   = () => { setStatus('○ Server disconnected', '#aaa'); signalWS = null; if (mpConnected) onMPDisconnected(); };
   signalWS.onmessage = (ev) => { try { handleSignal(JSON.parse(ev.data)); } catch(e) {} };
 }
 
@@ -1050,8 +1047,14 @@ function sendSignal(data) {
   if (signalWS && signalWS.readyState === WebSocket.OPEN) signalWS.send(JSON.stringify(data));
 }
 
+// sendRelay wraps game data as a relay message through the server
+function sendRelay(data) {
+  sendSignal({ type:'relay', data });
+}
+
 function handleSignal(msg) {
   switch (msg.type) {
+
     case 'room_created':
       document.getElementById('roomCodeDisplay').textContent = msg.code;
       document.getElementById('hostStatus').textContent = 'Waiting for Player 2...';
@@ -1059,25 +1062,22 @@ function handleSignal(msg) {
       break;
 
     case 'player_joined':
-      document.getElementById('hostStatus').textContent = 'Player joined! Connecting...';
-      document.getElementById('hostStatus').style.color = '#ff0';
-      beginHostSignaling();
+      // Client has joined — start game immediately, no WebRTC needed
+      document.getElementById('hostStatus').textContent = 'Player 2 connected!';
+      document.getElementById('hostStatus').style.color = '#0f0';
+      onMPConnected();
       break;
 
     case 'joined':
-      document.getElementById('joinStatus').textContent = 'Joined! Waiting for host...';
+      // We joined the room — wait for host to send game state
+      document.getElementById('joinStatus').textContent = 'Connected! Starting game...';
+      document.getElementById('joinStatus').style.color = '#0f0';
+      onMPConnected();
       break;
 
-    case 'offer':
-      handleClientOffer(msg.sdp);
-      break;
-
-    case 'answer':
-      if (peerConn) peerConn.setRemoteDescription(msg.sdp).catch(()=>{});
-      break;
-
-    case 'ice':
-      if (peerConn && msg.candidate) peerConn.addIceCandidate(msg.candidate).catch(()=>{});
+    case 'relay':
+      // Game data forwarded from the other player
+      handleGameMessage(msg.data);
       break;
 
     case 'peer_disconnected':
@@ -1092,64 +1092,17 @@ function handleSignal(msg) {
   }
 }
 
-// ----------------------------------------------------------------
-// WEBRTC
-// ----------------------------------------------------------------
-function createPeer() {
-  peerConn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
-  peerConn.onconnectionstatechange = () => {
-    const s = peerConn.connectionState;
-    if (s==='connected') onMPConnected();
-    if (s==='disconnected'||s==='failed') onMPDisconnected();
-  };
-  peerConn.oniceconnectionstatechange = () => {
-    const s = peerConn.iceConnectionState;
-    if (s==='failed') onMPFailed();
-  };
-  return peerConn;
-}
-
-function setupChannel(ch) {
-  dataChannel=ch;
-  ch.onopen  = () => onMPConnected();
-  ch.onclose = () => onMPDisconnected();
-  ch.onerror = () => onMPFailed();
-  ch.onmessage = (ev) => {
-    try {
-      const data=JSON.parse(ev.data);
-      if (mpMode==='host'&&data.t==='in') {
-        p2InputBuffer={ dir:data.d, fire:data.f };
-      } else if (mpMode==='client'&&(data.t==='gs'||data.t==='fullmap')) {
-        applyRemoteState(data);
-      } else if (mpMode==='client'&&data.t==='restart') {
-        clientMapReady=false;
-        document.getElementById('game-over-screen').classList.add('hidden');
-        document.querySelector('.tabs').classList.remove('hidden');
-      }
-    } catch(e) {}
-  };
-}
-
-async function beginHostSignaling() {
-  const pc = createPeer();
-  const ch = pc.createDataChannel('game');
-  setupChannel(ch);
-  // Trickle ICE: send each candidate immediately as it arrives
-  pc.onicecandidate = (ev) => { if (ev.candidate) sendSignal({ type:'ice', candidate:ev.candidate }); };
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  sendSignal({ type:'offer', sdp: pc.localDescription });
-}
-
-async function handleClientOffer(sdp) {
-  const pc = createPeer();
-  pc.ondatachannel = (ev) => setupChannel(ev.channel);
-  pc.onicecandidate = (ev) => { if (ev.candidate) sendSignal({ type:'ice', candidate:ev.candidate }); };
-  await pc.setRemoteDescription(sdp);
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  sendSignal({ type:'answer', sdp: pc.localDescription });
-  document.getElementById('joinStatus').textContent = 'Connecting...';
+function handleGameMessage(data) {
+  if (!data) return;
+  if (mpMode==='host' && data.t==='in') {
+    p2InputBuffer = { dir:data.d, fire:data.f };
+  } else if (mpMode==='client' && (data.t==='gs' || data.t==='fullmap')) {
+    applyRemoteState(data);
+  } else if (mpMode==='client' && data.t==='restart') {
+    clientMapReady=false;
+    document.getElementById('game-over-screen').classList.add('hidden');
+    document.querySelector('.tabs').classList.remove('hidden');
+  }
 }
 
 // ---- HOST ----
@@ -1166,10 +1119,7 @@ function startHosting() {
 // ---- CLIENT ----
 function startJoining() {
   const code = (document.getElementById('joinCodeInput').value || '').trim().toUpperCase();
-  if (code.length !== 4) {
-    document.getElementById('joinCodeInput').focus();
-    return;
-  }
+  if (code.length !== 4) { document.getElementById('joinCodeInput').focus(); return; }
   mpMode='client';
   document.getElementById('mp-select').classList.add('hidden');
   document.getElementById('mp-join').classList.remove('hidden');
@@ -1191,7 +1141,7 @@ function onMPConnected() {
 }
 
 function onMPDisconnected() {
-  if (!mpConnected && !peerConn) return;
+  if (!mpConnected) return;
   mpConnected=false;
   state='menu';
   document.getElementById('overlay').classList.remove('hidden');
@@ -1201,19 +1151,9 @@ function onMPDisconnected() {
   resetMP();
 }
 
-function onMPFailed() {
-  if (!peerConn) return;
-  mpConnected=false;
-  const statusId = mpMode==='host' ? 'hostStatus' : 'joinStatus';
-  const el = document.getElementById(statusId);
-  if (el) { el.style.color='#f55'; el.textContent='⚠ Connection failed. Try again.'; }
-  resetMP();
-}
-
 function resetMP() {
   mpMode='none'; mpConnected=false; clientMapReady=false;
-  if (peerConn) { peerConn.close(); peerConn=null; }
-  dataChannel=null; p2InputBuffer={dir:-1,fire:false};
+  p2InputBuffer={dir:-1,fire:false};
   document.getElementById('mp-select').classList.remove('hidden');
   document.getElementById('mp-host').classList.add('hidden');
   document.getElementById('mp-join').classList.add('hidden');
@@ -1232,7 +1172,7 @@ function serializeTank(t) {
 }
 
 function sendStateToClient() {
-  if (!dataChannel||dataChannel.readyState!=='open') return;
+  if (!mpConnected) return;
   const snap = {
     t:'gs', st:state,
     p1:serializeTank(player), p2:serializeTank(player2),
@@ -1249,14 +1189,14 @@ function sendStateToClient() {
     got:gameOverTimer,
   };
   pendingMapChanges=[];
-  try { dataChannel.send(JSON.stringify(snap)); } catch(e) {}
+  sendRelay(snap);
 }
 
 function sendFullMapToClient() {
-  if (!dataChannel||dataChannel.readyState!=='open') return;
+  if (!mpConnected) return;
   const flat=[];
   for (let r=0;r<SUBROWS;r++) for (let c=0;c<SUBCOLS;c++) flat.push(map[r][c]);
-  try { dataChannel.send(JSON.stringify({ t:'fullmap', data:flat })); } catch(e) {}
+  sendRelay({ t:'fullmap', data:flat });
 }
 
 function applyRemoteState(data) {
