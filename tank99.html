@@ -61,14 +61,13 @@
   .mp-btn.primary:hover { background: #006600; }
   .mp-btn.blue { background: #000044; color: #49f; border-color: #049; }
   .mp-btn.blue:hover { background: #000066; }
-  .mp-code-area { width: 100%; height: 56px; background: #000; color: #0f0; border: 1px solid #0a0; font-family: 'Courier New', monospace; font-size: 10px; padding: 4px; resize: none; border-radius: 3px; }
-  .mp-code-area.blue { color: #49f; border-color: #049; }
   .mp-status { font-size: 11px; text-align: center; margin-top: 6px; min-height: 16px; }
-  .mp-row { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
-  .mp-row label { color: #aaa; font-size: 11px; white-space: nowrap; }
-  .mp-divider { border: none; border-top: 1px solid #333; margin: 8px 0; }
   .mp-note { font-size: 10px; color: #888; text-align: center; }
   #mpConnStatus { font-size: 13px; font-weight: bold; text-align: center; padding: 6px; border-radius: 3px; }
+  #mp-server-status { font-size: 10px; text-align: center; margin-bottom: 6px; }
+  #roomCodeDisplay { font-size: 42px; font-weight: bold; color: #ff0; letter-spacing: 10px; text-align: center; margin: 10px 0; font-family: 'Courier New', monospace; text-shadow: 0 0 12px #ff0; }
+  #joinCodeInput { background: #000; color: #ff0; border: 1px solid #555; font-family: 'Courier New', monospace; font-size: 22px; letter-spacing: 6px; text-align: center; padding: 6px 10px; width: 110px; border-radius: 3px; text-transform: uppercase; outline: none; }
+  #joinCodeInput:focus { border-color: #ff0; }
 </style>
 </head>
 <body>
@@ -193,54 +192,45 @@
     <!-- MULTIPLAYER TAB -->
     <div id="tab-mp" class="hidden">
 
+      <div id="mp-server-status">Connecting to server...</div>
+
       <div id="mp-conn-status" class="mp-section" style="display:none;">
         <div id="mpConnStatus" style="color:#0f0;">● Connected</div>
       </div>
 
       <!-- Mode selection -->
       <div id="mp-select" class="mp-section">
-        <h3>Choose your role</h3>
+        <h3 style="text-align:center; margin-bottom:14px;">Multiplayer</h3>
         <div class="mp-btns">
-          <button class="mp-btn primary" onclick="startHosting()">🏠 Host Game (P1)</button>
-          <button class="mp-btn blue" onclick="startJoining()">🔗 Join Game (P2)</button>
+          <button class="mp-btn primary" onclick="startHosting()">🏠 Host Game</button>
         </div>
-        <p class="mp-note">Host runs the game. Both players share the same map and enemies.<br>Exchange codes below to connect — no server needed!</p>
+        <div style="display:flex; gap:8px; justify-content:center; align-items:center; margin-top:10px;">
+          <input id="joinCodeInput" maxlength="4" placeholder="CODE" spellcheck="false"
+            oninput="this.value=this.value.toUpperCase()"
+            onkeydown="if(event.key==='Enter') startJoining()">
+          <button class="mp-btn blue" onclick="startJoining()">🔗 Join</button>
+        </div>
+        <p class="mp-note" style="margin-top:10px;">Host creates a room and shares the 4-letter code.<br>Player 2 types the code and joins instantly.</p>
       </div>
 
-      <!-- HOST UI -->
-      <div id="mp-host" class="mp-section hidden">
-        <h3>🏠 Hosting — You are Player 1</h3>
-        <p style="font-size:11px;color:#aaa;margin-bottom:6px;">Step 1: Copy this Room Code and send it to Player 2</p>
-        <textarea class="mp-code-area" id="hostOfferCode" readonly placeholder="Generating room code..."></textarea>
-        <div class="mp-btns" style="margin-top:4px;">
-          <button class="mp-btn" onclick="copyCode('hostOfferCode')">📋 Copy Room Code</button>
-        </div>
-        <hr class="mp-divider">
-        <p style="font-size:11px;color:#aaa;margin-bottom:6px;">Step 2: Paste Player 2's Answer Code here</p>
-        <textarea class="mp-code-area blue" id="hostAnswerInput" placeholder="Paste Player 2's answer code here..."></textarea>
-        <div class="mp-btns" style="margin-top:4px;">
-          <button class="mp-btn primary" onclick="hostSubmitAnswer()">🔌 Connect</button>
+      <!-- HOST waiting UI -->
+      <div id="mp-host" class="mp-section hidden" style="text-align:center;">
+        <h3>🏠 You are Player 1</h3>
+        <p style="font-size:11px;color:#aaa;margin-bottom:4px;">Share this code with Player 2</p>
+        <div id="roomCodeDisplay">----</div>
+        <div id="hostStatus" class="mp-status" style="color:#aaa;">Connecting to server...</div>
+        <div class="mp-btns" style="margin-top:12px;">
           <button class="mp-btn" onclick="resetMP()">✕ Cancel</button>
         </div>
-        <div class="mp-status" id="hostStatus" style="color:#ff0;">Generating room code...</div>
       </div>
 
-      <!-- JOIN UI -->
-      <div id="mp-join" class="mp-section hidden">
-        <h3>🔗 Joining — You are Player 2</h3>
-        <p style="font-size:11px;color:#aaa;margin-bottom:6px;">Step 1: Paste the Host's Room Code here</p>
-        <textarea class="mp-code-area" id="joinOfferInput" placeholder="Paste host's room code here..."></textarea>
-        <div class="mp-btns" style="margin-top:4px;">
-          <button class="mp-btn primary" onclick="joinGenerateAnswer()">⚡ Generate Answer</button>
+      <!-- JOIN waiting UI -->
+      <div id="mp-join" class="mp-section hidden" style="text-align:center;">
+        <h3>🔗 You are Player 2</h3>
+        <div id="joinStatus" class="mp-status" style="color:#49f;">Joining room...</div>
+        <div class="mp-btns" style="margin-top:12px;">
           <button class="mp-btn" onclick="resetMP()">✕ Cancel</button>
         </div>
-        <hr class="mp-divider">
-        <p style="font-size:11px;color:#aaa;margin-bottom:6px;">Step 2: Copy this Answer Code and send it to the Host</p>
-        <textarea class="mp-code-area blue" id="joinAnswerCode" readonly placeholder="Answer code appears here..."></textarea>
-        <div class="mp-btns" style="margin-top:4px;">
-          <button class="mp-btn" onclick="copyCode('joinAnswerCode')">📋 Copy Answer Code</button>
-        </div>
-        <div class="mp-status" id="joinStatus" style="color:#49f;">Waiting for host's room code...</div>
       </div>
 
     </div><!-- end tab-mp -->
@@ -963,11 +953,9 @@ function switchTab(tab) {
   document.getElementById('tab-mp').classList.toggle('hidden', tab!=='mp');
   document.getElementById('tabBtn-sp').classList.toggle('active', tab==='sp');
   document.getElementById('tabBtn-mp').classList.toggle('active', tab==='mp');
+  // Pre-connect to signaling server as soon as the MP tab is opened
+  if (tab==='mp') connectSignaling(()=>{});
 }
-
-// ----------------------------------------------------------------
-// WEBRTC — SIGNALING (manual copy-paste, no server needed)
-// ----------------------------------------------------------------
 const ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -1039,6 +1027,72 @@ function playAgain() {
 }
 
 // ----------------------------------------------------------------
+// SIGNALING (WebSocket → game-server on Railway)
+// ----------------------------------------------------------------
+const SIGNAL_URL = 'wss://game-server-production-5029.up.railway.app';
+let signalWS = null;
+
+function connectSignaling(onReady) {
+  const setStatus = (txt, col) => {
+    const el = document.getElementById('mp-server-status');
+    if (el) { el.textContent = txt; el.style.color = col || '#aaa'; }
+  };
+  if (signalWS && signalWS.readyState === WebSocket.OPEN) { onReady(); return; }
+  setStatus('Connecting to server...', '#aaa');
+  signalWS = new WebSocket(SIGNAL_URL);
+  signalWS.onopen    = () => { setStatus('● Server connected', '#0f0'); onReady(); };
+  signalWS.onerror   = () => setStatus('⚠ Cannot reach server', '#f55');
+  signalWS.onclose   = () => { setStatus('○ Server disconnected', '#aaa'); signalWS = null; };
+  signalWS.onmessage = (ev) => { try { handleSignal(JSON.parse(ev.data)); } catch(e) {} };
+}
+
+function sendSignal(data) {
+  if (signalWS && signalWS.readyState === WebSocket.OPEN) signalWS.send(JSON.stringify(data));
+}
+
+function handleSignal(msg) {
+  switch (msg.type) {
+    case 'room_created':
+      document.getElementById('roomCodeDisplay').textContent = msg.code;
+      document.getElementById('hostStatus').textContent = 'Waiting for Player 2...';
+      document.getElementById('hostStatus').style.color = '#aaa';
+      break;
+
+    case 'player_joined':
+      document.getElementById('hostStatus').textContent = 'Player joined! Connecting...';
+      document.getElementById('hostStatus').style.color = '#ff0';
+      beginHostSignaling();
+      break;
+
+    case 'joined':
+      document.getElementById('joinStatus').textContent = 'Joined! Waiting for host...';
+      break;
+
+    case 'offer':
+      handleClientOffer(msg.sdp);
+      break;
+
+    case 'answer':
+      if (peerConn) peerConn.setRemoteDescription(msg.sdp).catch(()=>{});
+      break;
+
+    case 'ice':
+      if (peerConn && msg.candidate) peerConn.addIceCandidate(msg.candidate).catch(()=>{});
+      break;
+
+    case 'peer_disconnected':
+      onMPDisconnected();
+      break;
+
+    case 'error':
+      const statusId = mpMode==='host' ? 'hostStatus' : 'joinStatus';
+      const el = document.getElementById(statusId);
+      if (el) { el.textContent = '⚠ ' + msg.message; el.style.color = '#f55'; }
+      break;
+  }
+}
+
+// ----------------------------------------------------------------
 // WEBRTC
 // ----------------------------------------------------------------
 function createPeer() {
@@ -1050,14 +1104,14 @@ function createPeer() {
   };
   peerConn.oniceconnectionstatechange = () => {
     const s = peerConn.iceConnectionState;
-    if (s==='failed'||s==='closed') onMPFailed();
+    if (s==='failed') onMPFailed();
   };
   return peerConn;
 }
 
 function setupChannel(ch) {
   dataChannel=ch;
-  ch.onopen = () => onMPConnected();
+  ch.onopen  = () => onMPConnected();
   ch.onclose = () => onMPDisconnected();
   ch.onerror = () => onMPFailed();
   ch.onmessage = (ev) => {
@@ -1065,9 +1119,7 @@ function setupChannel(ch) {
       const data=JSON.parse(ev.data);
       if (mpMode==='host'&&data.t==='in') {
         p2InputBuffer={ dir:data.d, fire:data.f };
-      } else if (mpMode==='client'&&data.t==='gs') {
-        applyRemoteState(data);
-      } else if (mpMode==='client'&&data.t==='fullmap') {
+      } else if (mpMode==='client'&&(data.t==='gs'||data.t==='fullmap')) {
         applyRemoteState(data);
       } else if (mpMode==='client'&&data.t==='restart') {
         clientMapReady=false;
@@ -1078,97 +1130,64 @@ function setupChannel(ch) {
   };
 }
 
-// ---- HOST ----
-function startHosting() {
-  document.getElementById('mp-select').classList.add('hidden');
-  document.getElementById('mp-host').classList.remove('hidden');
-  document.getElementById('hostStatus').textContent='Generating room code...';
-  document.getElementById('hostOfferCode').value='';
-  mpMode='host';
-  const pc=createPeer();
-  const ch=pc.createDataChannel('game');
+async function beginHostSignaling() {
+  const pc = createPeer();
+  const ch = pc.createDataChannel('game');
   setupChannel(ch);
-
-  let done=false;
-  function publishOffer() {
-    if (done||!pc.localDescription) return;
-    done=true;
-    document.getElementById('hostOfferCode').value=btoa(JSON.stringify(pc.localDescription));
-    document.getElementById('hostStatus').textContent='Room code ready! Share it with Player 2, then paste their answer code below.';
-  }
-  pc.onicecandidate=(ev)=>{ if (ev.candidate===null) publishOffer(); };
-
-  // Start offer + begin 3s fallback ONLY after setLocalDescription resolves
-  // (ICE gathering hasn't started before that, so the timer is meaningful)
-  pc.createOffer()
-    .then(o=>pc.setLocalDescription(o))
-    .then(()=>setTimeout(publishOffer, 3000));
+  // Trickle ICE: send each candidate immediately as it arrives
+  pc.onicecandidate = (ev) => { if (ev.candidate) sendSignal({ type:'ice', candidate:ev.candidate }); };
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+  sendSignal({ type:'offer', sdp: pc.localDescription });
 }
 
-function hostSubmitAnswer() {
-  const raw=document.getElementById('hostAnswerInput').value.trim();
-  if (!raw) { document.getElementById('hostStatus').textContent='⚠ Paste Player 2\'s answer code first!'; return; }
-  try {
-    const answer=JSON.parse(atob(raw));
-    peerConn.setRemoteDescription(answer)
-      .then(()=>{
-        document.getElementById('hostStatus').textContent='Connecting...';
-        // If not connected within 15s, surface the failure
-        setTimeout(()=>{ if (!mpConnected) onMPFailed(); }, 15000);
-      })
-      .catch(()=>{ document.getElementById('hostStatus').textContent='⚠ Invalid code. Try again.'; });
-  } catch(e) {
-    document.getElementById('hostStatus').textContent='⚠ Invalid code. Try again.';
-  }
+async function handleClientOffer(sdp) {
+  const pc = createPeer();
+  pc.ondatachannel = (ev) => setupChannel(ev.channel);
+  pc.onicecandidate = (ev) => { if (ev.candidate) sendSignal({ type:'ice', candidate:ev.candidate }); };
+  await pc.setRemoteDescription(sdp);
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  sendSignal({ type:'answer', sdp: pc.localDescription });
+  document.getElementById('joinStatus').textContent = 'Connecting...';
+}
+
+// ---- HOST ----
+function startHosting() {
+  mpMode='host';
+  document.getElementById('mp-select').classList.add('hidden');
+  document.getElementById('mp-host').classList.remove('hidden');
+  document.getElementById('hostStatus').textContent = 'Connecting to server...';
+  document.getElementById('hostStatus').style.color = '#aaa';
+  document.getElementById('roomCodeDisplay').textContent = '----';
+  connectSignaling(() => sendSignal({ type:'create_room' }));
 }
 
 // ---- CLIENT ----
 function startJoining() {
+  const code = (document.getElementById('joinCodeInput').value || '').trim().toUpperCase();
+  if (code.length !== 4) {
+    document.getElementById('joinCodeInput').focus();
+    return;
+  }
+  mpMode='client';
   document.getElementById('mp-select').classList.add('hidden');
   document.getElementById('mp-join').classList.remove('hidden');
-  mpMode='client';
-}
-
-function joinGenerateAnswer() {
-  const raw=document.getElementById('joinOfferInput').value.trim();
-  if (!raw) { document.getElementById('joinStatus').textContent='⚠ Paste the host\'s room code first!'; return; }
-  try {
-    const offer=JSON.parse(atob(raw));
-    const pc=createPeer();
-    pc.ondatachannel=(ev)=>setupChannel(ev.channel);
-
-    let done=false;
-    function publishAnswer() {
-      if (done||!pc.localDescription) return;
-      done=true;
-      document.getElementById('joinAnswerCode').value=btoa(JSON.stringify(pc.localDescription));
-      document.getElementById('joinStatus').textContent='Answer code ready! Send it to the Host, then wait for them to connect.';
-    }
-    pc.onicecandidate=(ev)=>{ if (ev.candidate===null) publishAnswer(); };
-
-    // Start 3s fallback ONLY after setLocalDescription resolves
-    pc.setRemoteDescription(offer)
-      .then(()=>pc.createAnswer())
-      .then(a=>{ pc.setLocalDescription(a); document.getElementById('joinStatus').textContent='Generating answer code...'; return; })
-      .then(()=>setTimeout(publishAnswer, 3000))
-      .catch(()=>{ document.getElementById('joinStatus').textContent='⚠ Invalid room code. Try again.'; });
-  } catch(e) {
-    document.getElementById('joinStatus').textContent='⚠ Invalid room code. Try again.';
-  }
+  document.getElementById('joinStatus').textContent = 'Connecting to server...';
+  connectSignaling(() => sendSignal({ type:'join_room', code }));
 }
 
 // ---- CONNECTION EVENTS ----
 function onMPConnected() {
-  if (mpConnected) return; // guard: ch.onopen + onconnectionstatechange both fire this
+  if (mpConnected) return;
   mpConnected=true;
   document.getElementById('mp-conn-status').style.display='block';
   document.getElementById('mpConnStatus').textContent='● Connected! Starting game...';
   document.getElementById('mpConnStatus').style.color='#0f0';
   if (mpMode==='host') {
     lives=3; score=0; p2Lives=3; p2Score=0; stage=0;
-    setTimeout(()=>{ initStage(); sendFullMapToClient(); },800);
+    setTimeout(()=>{ initStage(); sendFullMapToClient(); }, 800);
   }
-  // Client waits for host to send game state
 }
 
 function onMPDisconnected() {
@@ -1183,20 +1202,12 @@ function onMPDisconnected() {
 }
 
 function onMPFailed() {
-  if (!peerConn) return; // already cleaned up
+  if (!peerConn) return;
   mpConnected=false;
-  const isHost = mpMode==='host';
-  const statusId = isHost ? 'hostStatus' : 'joinStatus';
+  const statusId = mpMode==='host' ? 'hostStatus' : 'joinStatus';
   const el = document.getElementById(statusId);
-  if (el) {
-    el.style.color='#f55';
-    el.textContent='⚠ Connection failed. Check that both players are on the same network / VPN, then try again.';
-  }
+  if (el) { el.style.color='#f55'; el.textContent='⚠ Connection failed. Try again.'; }
   resetMP();
-  // Re-show the role selector so they can retry without reloading
-  document.getElementById('mp-select').classList.remove('hidden');
-  document.getElementById('mp-host').classList.add('hidden');
-  document.getElementById('mp-join').classList.add('hidden');
 }
 
 function resetMP() {
@@ -1209,14 +1220,6 @@ function resetMP() {
   document.getElementById('mp-conn-status').style.display='none';
   document.getElementById('p2sidebar').classList.add('hidden');
   player2=null;
-}
-
-function copyCode(id) {
-  const el=document.getElementById(id);
-  if (!el.value) return;
-  navigator.clipboard.writeText(el.value);
-  el.style.borderColor='#0f0';
-  setTimeout(()=>{ el.style.borderColor=''; },1000);
 }
 
 // ----------------------------------------------------------------
