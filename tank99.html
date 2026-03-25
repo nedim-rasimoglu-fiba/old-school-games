@@ -1072,6 +1072,16 @@ function setupChannel(ch) {
   };
 }
 
+// ---- ICE GATHER HELPER ----
+// Calls onReady(pc) when ICE gathering completes or after maxWaitMs (whichever is first).
+function waitForICE(pc, onReady, maxWaitMs=3000) {
+  let done=false;
+  function fire() { if (done) return; done=true; onReady(pc); }
+  pc.onicecandidate = (ev) => { if (ev.candidate===null) fire(); };
+  pc.onicegatheringstatechange = () => { if (pc.iceGatheringState==='complete') fire(); };
+  setTimeout(fire, maxWaitMs);
+}
+
 // ---- HOST ----
 function startHosting() {
   document.getElementById('mp-select').classList.add('hidden');
@@ -1082,12 +1092,10 @@ function startHosting() {
   const pc=createPeer();
   const ch=pc.createDataChannel('game');
   setupChannel(ch);
-  pc.onicecandidate = (ev) => {
-    if (ev.candidate===null) {
-      document.getElementById('hostOfferCode').value=btoa(JSON.stringify(pc.localDescription));
-      document.getElementById('hostStatus').textContent='Room code ready! Share it with Player 2, then paste their answer code below.';
-    }
-  };
+  waitForICE(pc, ()=>{
+    document.getElementById('hostOfferCode').value=btoa(JSON.stringify(pc.localDescription));
+    document.getElementById('hostStatus').textContent='Room code ready! Share it with Player 2, then paste their answer code below.';
+  });
   pc.createOffer().then(o=>pc.setLocalDescription(o));
 }
 
@@ -1118,12 +1126,10 @@ function joinGenerateAnswer() {
     const offer=JSON.parse(atob(raw));
     const pc=createPeer();
     pc.ondatachannel=(ev)=>setupChannel(ev.channel);
-    pc.onicecandidate=(ev)=>{
-      if (ev.candidate===null) {
-        document.getElementById('joinAnswerCode').value=btoa(JSON.stringify(pc.localDescription));
-        document.getElementById('joinStatus').textContent='Answer code ready! Send it to the Host, then wait for them to connect.';
-      }
-    };
+    waitForICE(pc, ()=>{
+      document.getElementById('joinAnswerCode').value=btoa(JSON.stringify(pc.localDescription));
+      document.getElementById('joinStatus').textContent='Answer code ready! Send it to the Host, then wait for them to connect.';
+    });
     pc.setRemoteDescription(offer)
       .then(()=>pc.createAnswer())
       .then(a=>{ pc.setLocalDescription(a); document.getElementById('joinStatus').textContent='Generating answer code...'; })
