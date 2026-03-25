@@ -244,6 +244,15 @@
       </div>
 
     </div><!-- end tab-mp -->
+
+    <!-- GAME OVER SCREEN -->
+    <div id="game-over-screen" class="hidden" style="display:flex;flex-direction:column;align-items:center;gap:14px;padding:10px 0;width:100%;">
+      <div id="goScores" style="color:#fff;font-size:15px;letter-spacing:1px;text-align:center;"></div>
+      <button id="playAgainBtn" onclick="playAgain()" style="padding:10px 32px;background:#ff0;color:#000;border:none;font-family:'Courier New',monospace;font-size:15px;font-weight:bold;cursor:pointer;border-radius:4px;letter-spacing:1px;">▶ PLAY AGAIN</button>
+      <p id="playAgainNote" style="color:#aaa;font-size:12px;margin:0;"></p>
+      <button onclick="showMainMenu()" style="padding:5px 18px;background:#222;color:#aaa;border:1px solid #444;font-family:'Courier New',monospace;font-size:12px;cursor:pointer;border-radius:3px;">⬅ Main Menu</button>
+    </div>
+
   </div><!-- end overlay -->
 </div>
 
@@ -293,6 +302,7 @@ let state = 'menu';
 let stage = 0, lives = 3, score = 0;
 let p2Lives = 3, p2Score = 0;
 let map = [];
+for (let _r = 0; _r < SUBROWS; _r++) { map[_r] = []; for (let _c = 0; _c < SUBCOLS; _c++) map[_r][_c] = T.EMPTY; }
 let player = null, player2 = null;
 let bullets = [], enemies = [], particles = [], powerUps = [];
 let enemiesLeft = 0, enemySpawnTimer = 0, enemySpawnIndex = 0;
@@ -306,6 +316,7 @@ let godMode = false, passiveEnemies = false, noAggroEnemies = false;
 // ----------------------------------------------------------------
 let mpMode = 'none';       // 'none' | 'host' | 'client'
 let mpConnected = false;
+let clientMapReady = false; // client: true after first fullmap received
 let peerConn = null, dataChannel = null;
 let p2InputBuffer = { dir: -1, fire: false };
 let pendingMapChanges = [];
@@ -804,8 +815,7 @@ function update() {
       document.getElementById('overlay').classList.remove('hidden');
       document.getElementById('ingameSettingsBtn').classList.add('hidden');
       document.getElementById('ingameSettings').classList.add('hidden');
-      document.getElementById('overlay').querySelector('h1').textContent='GAME OVER';
-      document.getElementById('overlay').querySelector('p').textContent=`P1: ${score}  P2: ${p2Score}`;
+      showGameOver();
     }
     return;
   }
@@ -934,7 +944,7 @@ function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
 // ----------------------------------------------------------------
 document.addEventListener('keydown', (e) => {
   keys[e.key]=true;
-  if (e.key==='Enter'&&state==='menu'&&mpMode==='none') { stage=0; lives=3; score=0; p2Score=0; initStage(); }
+  if (e.key==='Enter'&&state==='menu'&&mpMode==='none') { playAgain(); }
   if (e.key==='i'||e.key==='I') {
     godMode=!godMode;
     document.getElementById('godModeLabel').textContent=godMode?'ON':'OFF';
@@ -963,6 +973,74 @@ const ICE_SERVERS = [
   { urls: 'stun:stun1.l.google.com:19302' },
 ];
 
+// ----------------------------------------------------------------
+// GAME OVER / PLAY AGAIN
+// ----------------------------------------------------------------
+function showGameOver() {
+  const ov = document.getElementById('overlay');
+  ov.querySelector('h1').textContent = 'GAME OVER';
+  ov.querySelector('p').textContent = '';
+  // Hide tabs, show game-over screen
+  document.querySelector('.tabs').classList.add('hidden');
+  document.getElementById('tab-sp').classList.add('hidden');
+  document.getElementById('tab-mp').classList.add('hidden');
+  const gos = document.getElementById('game-over-screen');
+  gos.classList.remove('hidden');
+  gos.style.display = 'flex';
+  document.getElementById('goScores').textContent =
+    mpMode !== 'none'
+      ? `P1 Score: ${score}    P2 Score: ${p2Score}`
+      : `Score: ${score}`;
+  const btn = document.getElementById('playAgainBtn');
+  const note = document.getElementById('playAgainNote');
+  if (mpMode === 'client') {
+    btn.disabled = true;
+    btn.style.opacity = '0.4';
+    btn.textContent = '⏳ Waiting for host...';
+    note.textContent = 'The host controls when the next game starts.';
+  } else {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+    btn.textContent = '▶ PLAY AGAIN';
+    note.textContent = '';
+  }
+}
+
+function showMainMenu() {
+  document.getElementById('game-over-screen').classList.add('hidden');
+  document.querySelector('.tabs').classList.remove('hidden');
+  document.getElementById('overlay').querySelector('h1').textContent = 'TANK 99';
+  document.getElementById('overlay').querySelector('p').innerHTML = 'Defend the <span style="color:#ff0;">Eagle</span> from enemy tanks!';
+  if (mpMode !== 'none') {
+    resetMP();
+    switchTab('mp');
+  } else {
+    switchTab('sp');
+  }
+}
+
+function playAgain() {
+  document.getElementById('game-over-screen').classList.add('hidden');
+  document.querySelector('.tabs').classList.remove('hidden');
+  document.getElementById('overlay').querySelector('h1').textContent = 'TANK 99';
+  document.getElementById('overlay').querySelector('p').innerHTML = 'Defend the <span style="color:#ff0;">Eagle</span> from enemy tanks!';
+  if (mpMode === 'host') {
+    lives=3; score=0; p2Lives=3; p2Score=0; stage=0;
+    clientMapReady=false;
+    initStage();
+    sendFullMapToClient();
+    if (dataChannel && dataChannel.readyState==='open') {
+      dataChannel.send(JSON.stringify({t:'restart'}));
+    }
+  } else {
+    // Single player
+    stage=0; lives=3; score=0; p2Score=0; initStage();
+  }
+}
+
+// ----------------------------------------------------------------
+// WEBRTC
+// ----------------------------------------------------------------
 function createPeer() {
   peerConn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   peerConn.onconnectionstatechange = () => {
@@ -983,6 +1061,12 @@ function setupChannel(ch) {
         p2InputBuffer={ dir:data.d, fire:data.f };
       } else if (mpMode==='client'&&data.t==='gs') {
         applyRemoteState(data);
+      } else if (mpMode==='client'&&data.t==='fullmap') {
+        applyRemoteState(data);
+      } else if (mpMode==='client'&&data.t==='restart') {
+        clientMapReady=false;
+        document.getElementById('game-over-screen').classList.add('hidden');
+        document.querySelector('.tabs').classList.remove('hidden');
       }
     } catch(e) {}
   };
@@ -1073,7 +1157,7 @@ function onMPDisconnected() {
 }
 
 function resetMP() {
-  mpMode='none'; mpConnected=false;
+  mpMode='none'; mpConnected=false; clientMapReady=false;
   if (peerConn) { peerConn.close(); peerConn=null; }
   dataChannel=null; p2InputBuffer={dir:-1,fire:false};
   document.getElementById('mp-select').classList.remove('hidden');
@@ -1116,6 +1200,7 @@ function sendStateToClient() {
     sc:score, p2sc:p2Score, lv:lives, p2lv:p2Lives,
     el:enemiesLeft, ea:eagleAlive?1:0, stage:stage,
     ft:freezeTimer, sh:shieldTimer, p2sh:p2ShieldTimer,
+    got:gameOverTimer,
   };
   pendingMapChanges=[];
   try { dataChannel.send(JSON.stringify(snap)); } catch(e) {}
@@ -1130,10 +1215,9 @@ function sendFullMapToClient() {
 
 function applyRemoteState(data) {
   if (data.t==='fullmap') {
-    if (!map.length) { for (let r=0;r<SUBROWS;r++) { map[r]=[]; for(let c=0;c<SUBCOLS;c++) map[r][c]=T.EMPTY; } }
     let i=0;
     for (let r=0;r<SUBROWS;r++) for (let c=0;c<SUBCOLS;c++) map[r][c]=data.data[i++];
-    eagleAlive=true; return;
+    eagleAlive=true; clientMapReady=true; return;
   }
   if (data.t!=='gs') return;
 
@@ -1148,6 +1232,7 @@ function applyRemoteState(data) {
   lives=data.lv; p2Lives=data.p2lv; enemiesLeft=data.el;
   eagleAlive=!!data.ea; stage=data.stage;
   freezeTimer=data.ft; shieldTimer=data.sh; p2ShieldTimer=data.p2sh;
+  if (data.got!==undefined) gameOverTimer=data.got;
 
   function applyTank(tank, d, isP2) {
     if (!d) return null;
@@ -1183,8 +1268,8 @@ function applyRemoteState(data) {
   // Power-ups
   powerUps=data.pu.map(p=>({ gx:p.gx, gy:p.gy, type:p.type, timer:600 }));
 
-  // Show UI
-  if (state!=='menu') {
+  // Show UI — for client, wait until fullmap has been received first
+  if (state!=='menu' && (mpMode!=='client' || clientMapReady)) {
     document.getElementById('overlay').classList.add('hidden');
     document.getElementById('ingameSettingsBtn').classList.remove('hidden');
     document.getElementById('p2sidebar').classList.remove('hidden');
