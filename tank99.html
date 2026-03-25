@@ -1044,8 +1044,13 @@ function playAgain() {
 function createPeer() {
   peerConn = new RTCPeerConnection({ iceServers: ICE_SERVERS });
   peerConn.onconnectionstatechange = () => {
-    if (peerConn.connectionState==='connected') onMPConnected();
-    if (peerConn.connectionState==='disconnected'||peerConn.connectionState==='failed') onMPDisconnected();
+    const s = peerConn.connectionState;
+    if (s==='connected') onMPConnected();
+    if (s==='disconnected'||s==='failed') onMPDisconnected();
+  };
+  peerConn.oniceconnectionstatechange = () => {
+    const s = peerConn.iceConnectionState;
+    if (s==='failed'||s==='closed') onMPFailed();
   };
   return peerConn;
 }
@@ -1054,6 +1059,7 @@ function setupChannel(ch) {
   dataChannel=ch;
   ch.onopen = () => onMPConnected();
   ch.onclose = () => onMPDisconnected();
+  ch.onerror = () => onMPFailed();
   ch.onmessage = (ev) => {
     try {
       const data=JSON.parse(ev.data);
@@ -1105,7 +1111,11 @@ function hostSubmitAnswer() {
   try {
     const answer=JSON.parse(atob(raw));
     peerConn.setRemoteDescription(answer)
-      .then(()=>{ document.getElementById('hostStatus').textContent='Connecting...'; })
+      .then(()=>{
+        document.getElementById('hostStatus').textContent='Connecting...';
+        // If not connected within 15s, surface the failure
+        setTimeout(()=>{ if (!mpConnected) onMPFailed(); }, 15000);
+      })
       .catch(()=>{ document.getElementById('hostStatus').textContent='⚠ Invalid code. Try again.'; });
   } catch(e) {
     document.getElementById('hostStatus').textContent='⚠ Invalid code. Try again.';
@@ -1149,6 +1159,7 @@ function joinGenerateAnswer() {
 
 // ---- CONNECTION EVENTS ----
 function onMPConnected() {
+  if (mpConnected) return; // guard: ch.onopen + onconnectionstatechange both fire this
   mpConnected=true;
   document.getElementById('mp-conn-status').style.display='block';
   document.getElementById('mpConnStatus').textContent='● Connected! Starting game...';
@@ -1161,13 +1172,31 @@ function onMPConnected() {
 }
 
 function onMPDisconnected() {
+  if (!mpConnected && !peerConn) return;
   mpConnected=false;
-  if (state==='playing') {
-    state='menu';
-    document.getElementById('overlay').classList.remove('hidden');
-    document.getElementById('ingameSettingsBtn').classList.add('hidden');
-    resetMP();
+  state='menu';
+  document.getElementById('overlay').classList.remove('hidden');
+  document.getElementById('ingameSettingsBtn').classList.add('hidden');
+  document.getElementById('ingameSettings').classList.add('hidden');
+  showMainMenu();
+  resetMP();
+}
+
+function onMPFailed() {
+  if (!peerConn) return; // already cleaned up
+  mpConnected=false;
+  const isHost = mpMode==='host';
+  const statusId = isHost ? 'hostStatus' : 'joinStatus';
+  const el = document.getElementById(statusId);
+  if (el) {
+    el.style.color='#f55';
+    el.textContent='⚠ Connection failed. Check that both players are on the same network / VPN, then try again.';
   }
+  resetMP();
+  // Re-show the role selector so they can retry without reloading
+  document.getElementById('mp-select').classList.remove('hidden');
+  document.getElementById('mp-host').classList.add('hidden');
+  document.getElementById('mp-join').classList.add('hidden');
 }
 
 function resetMP() {
